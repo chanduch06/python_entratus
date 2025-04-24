@@ -1,85 +1,74 @@
 import aiohttp
-import asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+import pandas as pd
+from sqlalchemy import create_engine, Column, String, Float
+from sqlalchemy.orm import sessionmaker,  declarative_base
 from dotenv import load_dotenv
 import os
-import pandas as pd
-from sqlalchemy import create_engine
+
 load_dotenv()
 API_KEY = os.getenv("WEATHER_API_KEY")
 BASE_URL = "http://api.weatherapi.com/v1/current.json"
 
-# async def fetch_weather(session, location):
-#     """Fetch weather data asynchronously from WeatherAPI"""
-#     url = f"{BASE_URL}?key={API_KEY}&q={location}"
-#     async with session.get(url) as response:
-#         return await response.json() if response.status == 200 else None
-#
-# async def fetch_multiple_cities(cities):
-#     """Fetch weather for multiple cities concurrently"""
-#     async with aiohttp.ClientSession() as session:
-#         tasks = [fetch_weather(session, city) for city in cities]
-#         return await asyncio.gather(*tasks)
-#
-
-
-async def fetch_weather(location):
-    async with aiohttp.ClientSession() as session:
-        url = f"{BASE_URL}?key={API_KEY}&q={location}"
-        async with session.get(url) as response:
-            data = await response.json()
-            return data if response.status == 200 else None
-
-
-# async def main():
-#     location = "New York"
-#     weather_data = await fetch_weather(location)
-#
-#     if weather_data:
-#         print("Raw API Response:", weather_data)  # Print entire API data
-#         print("Temperature:", weather_data["current"]["temp_c"])  # Print specific field
-#         print("Condition:", weather_data["current"]["condition"]["text"])
-#     else:
-#         print("Error: Failed to retrieve weather data")
-
-#Run the async function
-#asyncio.run(main())
-
-
-# process and store the data
-
-
-
-def process_and_store(data):
-    if not data: return
-
-    location = data["location"]["name"]
-    temp = data["current"]["temp_c"]
-    condition = data["current"]["condition"]["text"]
-
-    df = pd.DataFrame([[location, temp, condition]], columns=["Location", "Temp_C", "Condition"])
-
-    engine = create_engine("sqlite:///weather.db")
-    df.to_sql("weather", engine, if_exists="replace", index=False)
-
-
-# Build FastAPI endpoints
-
-
-
+# FastAPI instance
 app = FastAPI()
 
-@app.get("/fetch_data/{location}")
-async def fetch_data(location: str):
-    data = await fetch_weather(location)
-    if data:
-        process_and_store(data)
-        return {"message": f"Weather data for {location} stored"}
-    return {"error": "Failed to retrieve data"}
+# Define Base correctly
+Base = declarative_base()
+
+# ORM Model
+class Weather(Base):
+    __tablename__ = "weather"
+    city = Column(String, primary_key=True)
+    temperature = Column(Float)
+    condition = Column(String)
+
+# Database setup
+DATABASE_URL = os.getenv("DATABASE_URL")
+engine = create_engine(DATABASE_URL)
+Base.metadata.create_all(engine)
+SessionLocal = sessionmaker(bind=engine)
+
+
+# Fetch data from external API
+async def fetch_weather_data(city: str):
+    async with aiohttp.ClientSession() as session:
+        try:
+            WEATHER_API_URL = f"{BASE_URL}?key={API_KEY}&q={city}" # External API URL
+            async with session.get(WEATHER_API_URL.format(city=city)) as response:
+                if response.status != 200:
+                    raise HTTPException(status_code=response.status, detail="Failed to fetch weather data")
+                return await response.json()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+# Process data and store it
+def process_and_store_data(data):
+    df = pd.DataFrame([{
+        "city": data["location"]["name"],
+        "temperature": data["current"]["temp_f"],
+        "condition" : data["current"]["condition"]["text"],
+
+    }])
+
+    session = SessionLocal()
+    for _, row in df.iterrows():
+        weather = Weather(city=row["city"], temperature=row["temperature"], condition=row["condition"])
+        session.merge(weather)  # Update or insert
+    session.commit()
+    session.close()
+
+# Routes
+@app.get("/fetch_data")
+async def fetch_data(city: str = "London"):
+    weather_data = await fetch_weather_data(city)
+    process_and_store_data(weather_data)
+    return {"detail": f"Weather data for {city} fetched and stored successfully"}
 
 @app.get("/results")
 def get_results():
-    engine = create_engine("sqlite:///weather.db")
-    df = pd.read_sql("SELECT * FROM weather", engine)
-    return df.to_dict(orient="records")
+    session = SessionLocal()
+    results = session.query(Weather).all()
+    session.close()
+    return [{"city": r.city, "temperature": r.temperature, "condition": r.condition} for r in results]
 
