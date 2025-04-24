@@ -1,5 +1,14 @@
 # Weather Microservice (Local)
 
+## Overview
+This microservice fetches weather data from an external API, processes the data, stores it in a SQLite database, and exposes endpoints to fetch and retrieve the processed data.
+
+Key Features:
+- Asynchronous API calls to fetch weather data.
+- Data processing and storage using SQLite.
+- REST API endpoints built with FastAPI.
+- Containerized setup using Docker for simplified deployment.
+
 ## Setup Instructions
 
 ### Requirements
