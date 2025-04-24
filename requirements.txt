@@ -1,0 +1,7 @@
+aiohttp
+pandas
+fastapi
+sqlalchemy
+uvicorn
+pytest
+python-dotenv
